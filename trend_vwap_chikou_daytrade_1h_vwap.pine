@@ -1,0 +1,187 @@
+//@version=6
+indicator("TrendSignal + VWAP + Chikou Daytrade 1H", shorttitle="TS VWAP Chikou 1H", overlay=true, max_labels_count=500)
+
+groupSignal = "TrendSignal"
+signalTf = input.timeframe("60", "Signal timeframe", group=groupSignal)
+risk = input.int(11, "RISK", minval=1, maxval=30, group=groupSignal)
+useCurrentTfBar = input.bool(false, "Use current 1H bar before close", group=groupSignal)
+
+groupVwap = "VWAP"
+anchorTf = input.timeframe("1D", "VWAP reset interval", group=groupVwap)
+vwapSource = input.source(hlc3, "VWAP source", group=groupVwap)
+showVwapBands = input.bool(false, "Show VWAP bands", group=groupVwap)
+bandMult1 = input.float(1.0, "Band 1 multiplier", minval=0.1, step=0.1, group=groupVwap)
+bandMult2 = input.float(2.0, "Band 2 multiplier", minval=0.1, step=0.1, group=groupVwap)
+autoColorVwap = input.bool(true, "Auto-color VWAP by price side", group=groupVwap)
+vwapFixedColor = input.color(color.white, "VWAP fixed color", group=groupVwap)
+vwapBullColor = input.color(color.rgb(24, 135, 92), "VWAP bullish color", group=groupVwap)
+vwapBearColor = input.color(color.rgb(205, 74, 74), "VWAP bearish color", group=groupVwap)
+vwapBand1Color = input.color(color.rgb(66, 133, 244), "VWAP band 1 color", group=groupVwap)
+vwapBand2Color = input.color(color.rgb(142, 68, 173), "VWAP band 2 color", group=groupVwap)
+
+groupIchimoku = "Ichimoku Chikou"
+chikouDisplacement = input.int(26, "Chikou displacement", minval=2, group=groupIchimoku)
+chikouMode = input.string("Bullish/Bearish state", "Chikou condition", options=["Bullish/Bearish state", "Fresh cross only"], group=groupIchimoku)
+plotChikou = input.bool(true, "Show Chikou span", group=groupIchimoku)
+chikouColor = input.color(color.rgb(80, 120, 255), "Chikou color", group=groupIchimoku)
+
+groupTrade = "Trade Filters"
+useSession = input.bool(false, "Limit signals to session", group=groupTrade)
+tradeSession = input.session("0900-1500", "Trading session", group=groupTrade)
+minAlignedConditions = input.int(3, "Minimum aligned conditions", minval=3, maxval=4, group=groupTrade)
+avoidDuplicateSide = input.bool(true, "Avoid duplicate same-side signals", group=groupTrade)
+showStatusPanel = input.bool(true, "Show status panel", group=groupTrade)
+
+groupPivots = "Higher Timeframe Pivots"
+showWeeklyPivots = input.bool(true, "Show weekly pivots", group=groupPivots)
+showMonthlyPivots = input.bool(true, "Show monthly pivots", group=groupPivots)
+showYearlyPivots = input.bool(true, "Show yearly pivots", group=groupPivots)
+pivotLevelSet = input.string("P/R1/S1", "Pivot levels", options=["P only", "P/R1/S1", "P/R1-R2/S1-S2", "P/R1-R3/S1-S3"], group=groupPivots)
+weeklyPivotColor = input.color(color.orange, "Weekly pivot color", group=groupPivots)
+monthlyPivotColor = input.color(color.rgb(66, 133, 244), "Monthly pivot color", group=groupPivots)
+yearlyPivotColor = input.color(color.rgb(156, 89, 182), "Yearly pivot color", group=groupPivots)
+
+trendSignal(_risk) =>
+    _wprLength = 3 + _risk * 2
+    _buyThreshold = -(33 - _risk)
+    _sellThreshold = -(67 + _risk)
+    _wpr = ta.wpr(_wprLength)
+    _rawBuy = ta.crossover(_wpr, _buyThreshold)
+    _rawSell = ta.crossunder(_wpr, _sellThreshold)
+    _dir = nz(ta.valuewhen(_rawBuy or _rawSell, _rawBuy ? 1 : -1, 0), 0)
+    _buy = _rawBuy and _dir[1] != 1
+    _sell = _rawSell and _dir[1] != -1
+    [_buy, _sell, _dir, _wpr]
+
+classicPivots(_h, _l, _c) =>
+    _p = (_h + _l + _c) / 3.0
+    _r1 = 2.0 * _p - _l
+    _s1 = 2.0 * _p - _h
+    _r2 = _p + (_h - _l)
+    _s2 = _p - (_h - _l)
+    _r3 = _h + 2.0 * (_p - _l)
+    _s3 = _l - 2.0 * (_h - _p)
+    [_p, _r1, _s1, _r2, _s2, _r3, _s3]
+
+[buyClosed, sellClosed, dirClosed, wprClosed] = request.security(syminfo.tickerid, signalTf, trendSignal(risk), barmerge.gaps_off, barmerge.lookahead_off)
+[buyLive, sellLive, dirLive, wprLive] = request.security(syminfo.tickerid, signalTf, trendSignal(risk), barmerge.gaps_off, barmerge.lookahead_on)
+
+trendBuy = useCurrentTfBar ? buyLive : buyClosed
+trendSell = useCurrentTfBar ? sellLive : sellClosed
+trendDir = useCurrentTfBar ? dirLive : dirClosed
+
+isNewAnchor = timeframe.change(anchorTf)
+[vwapValue, upper1, lower1] = ta.vwap(vwapSource, isNewAnchor, bandMult1)
+[_, upper2, lower2] = ta.vwap(vwapSource, isNewAnchor, bandMult2)
+
+[weeklyHigh, weeklyLow, weeklyClose] = request.security(syminfo.tickerid, "W", [high[1], low[1], close[1]], barmerge.gaps_off, barmerge.lookahead_on)
+[monthlyHigh, monthlyLow, monthlyClose] = request.security(syminfo.tickerid, "M", [high[1], low[1], close[1]], barmerge.gaps_off, barmerge.lookahead_on)
+[yearlyHigh, yearlyLow, yearlyClose] = request.security(syminfo.tickerid, "12M", [high[1], low[1], close[1]], barmerge.gaps_off, barmerge.lookahead_on)
+[weeklyPivot, weeklyR1, weeklyS1, weeklyR2, weeklyS2, weeklyR3, weeklyS3] = classicPivots(weeklyHigh, weeklyLow, weeklyClose)
+[monthlyPivot, monthlyR1, monthlyS1, monthlyR2, monthlyS2, monthlyR3, monthlyS3] = classicPivots(monthlyHigh, monthlyLow, monthlyClose)
+[yearlyPivot, yearlyR1, yearlyS1, yearlyR2, yearlyS2, yearlyR3, yearlyS3] = classicPivots(yearlyHigh, yearlyLow, yearlyClose)
+showPivotR1S1 = pivotLevelSet != "P only"
+showPivotR2S2 = pivotLevelSet == "P/R1-R2/S1-S2" or pivotLevelSet == "P/R1-R3/S1-S3"
+showPivotR3S3 = pivotLevelSet == "P/R1-R3/S1-S3"
+
+priceAboveVwap = close > vwapValue
+priceBelowVwap = close < vwapValue
+
+chikouLookback = chikouDisplacement - 1
+pastPrice = close[chikouLookback]
+chikouBullState = close > pastPrice
+chikouBearState = close < pastPrice
+chikouBullCross = ta.crossover(close, pastPrice)
+chikouBearCross = ta.crossunder(close, pastPrice)
+chikouBull = chikouMode == "Fresh cross only" ? chikouBullCross : chikouBullState
+chikouBear = chikouMode == "Fresh cross only" ? chikouBearCross : chikouBearState
+
+trendBull = trendDir == 1
+trendBear = trendDir == -1
+priceAboveWeeklyPivot = close > weeklyPivot
+priceBelowWeeklyPivot = close < weeklyPivot
+longConditionCount = (trendBull ? 1 : 0) + (priceAboveVwap ? 1 : 0) + (chikouBull ? 1 : 0) + (priceAboveWeeklyPivot ? 1 : 0)
+shortConditionCount = (trendBear ? 1 : 0) + (priceBelowVwap ? 1 : 0) + (chikouBear ? 1 : 0) + (priceBelowWeeklyPivot ? 1 : 0)
+
+inSession = not useSession or not na(time(timeframe.period, tradeSession))
+longSetup = inSession and longConditionCount >= minAlignedConditions
+shortSetup = inSession and shortConditionCount >= minAlignedConditions
+
+var int lastSide = 0
+longSignal = longSetup and (not avoidDuplicateSide or lastSide != 1)
+shortSignal = shortSetup and (not avoidDuplicateSide or lastSide != -1)
+
+if longSignal
+    lastSide := 1
+if shortSignal
+    lastSide := -1
+
+vwapColor = autoColorVwap ? priceAboveVwap ? vwapBullColor : priceBelowVwap ? vwapBearColor : color.gray : vwapFixedColor
+plot(vwapValue, "VWAP", color=vwapColor, linewidth=2)
+plot(plotChikou ? close : na, "Chikou Span", color=chikouColor, offset=-chikouLookback, linewidth=1)
+
+upper1Plot = plot(showVwapBands ? upper1 : na, "Upper VWAP Band 1", color=color.new(vwapBand1Color, 25), linewidth=1)
+lower1Plot = plot(showVwapBands ? lower1 : na, "Lower VWAP Band 1", color=color.new(vwapBand1Color, 25), linewidth=1)
+upper2Plot = plot(showVwapBands ? upper2 : na, "Upper VWAP Band 2", color=color.new(vwapBand2Color, 35), linewidth=1)
+lower2Plot = plot(showVwapBands ? lower2 : na, "Lower VWAP Band 2", color=color.new(vwapBand2Color, 35), linewidth=1)
+fill(upper1Plot, upper2Plot, color=showVwapBands ? color.new(vwapBand2Color, 92) : na, title="Upper VWAP extension zone")
+fill(lower1Plot, lower2Plot, color=showVwapBands ? color.new(vwapBand2Color, 92) : na, title="Lower VWAP extension zone")
+
+plot(showWeeklyPivots ? weeklyPivot : na, "Weekly Pivot P", color=color.new(weeklyPivotColor, 0), linewidth=2, style=plot.style_stepline)
+plot(showWeeklyPivots and showPivotR1S1 ? weeklyR1 : na, "Weekly Pivot R1", color=color.new(weeklyPivotColor, 20), linewidth=1, style=plot.style_stepline)
+plot(showWeeklyPivots and showPivotR1S1 ? weeklyS1 : na, "Weekly Pivot S1", color=color.new(weeklyPivotColor, 20), linewidth=1, style=plot.style_stepline)
+plot(showWeeklyPivots and showPivotR2S2 ? weeklyR2 : na, "Weekly Pivot R2", color=color.new(weeklyPivotColor, 40), linewidth=1, style=plot.style_stepline)
+plot(showWeeklyPivots and showPivotR2S2 ? weeklyS2 : na, "Weekly Pivot S2", color=color.new(weeklyPivotColor, 40), linewidth=1, style=plot.style_stepline)
+plot(showWeeklyPivots and showPivotR3S3 ? weeklyR3 : na, "Weekly Pivot R3", color=color.new(weeklyPivotColor, 55), linewidth=1, style=plot.style_stepline)
+plot(showWeeklyPivots and showPivotR3S3 ? weeklyS3 : na, "Weekly Pivot S3", color=color.new(weeklyPivotColor, 55), linewidth=1, style=plot.style_stepline)
+
+plot(showMonthlyPivots ? monthlyPivot : na, "Monthly Pivot P", color=color.new(monthlyPivotColor, 0), linewidth=2, style=plot.style_stepline)
+plot(showMonthlyPivots and showPivotR1S1 ? monthlyR1 : na, "Monthly Pivot R1", color=color.new(monthlyPivotColor, 20), linewidth=1, style=plot.style_stepline)
+plot(showMonthlyPivots and showPivotR1S1 ? monthlyS1 : na, "Monthly Pivot S1", color=color.new(monthlyPivotColor, 20), linewidth=1, style=plot.style_stepline)
+plot(showMonthlyPivots and showPivotR2S2 ? monthlyR2 : na, "Monthly Pivot R2", color=color.new(monthlyPivotColor, 40), linewidth=1, style=plot.style_stepline)
+plot(showMonthlyPivots and showPivotR2S2 ? monthlyS2 : na, "Monthly Pivot S2", color=color.new(monthlyPivotColor, 40), linewidth=1, style=plot.style_stepline)
+plot(showMonthlyPivots and showPivotR3S3 ? monthlyR3 : na, "Monthly Pivot R3", color=color.new(monthlyPivotColor, 55), linewidth=1, style=plot.style_stepline)
+plot(showMonthlyPivots and showPivotR3S3 ? monthlyS3 : na, "Monthly Pivot S3", color=color.new(monthlyPivotColor, 55), linewidth=1, style=plot.style_stepline)
+
+plot(showYearlyPivots ? yearlyPivot : na, "Yearly Pivot P", color=color.new(yearlyPivotColor, 0), linewidth=3, style=plot.style_stepline)
+plot(showYearlyPivots and showPivotR1S1 ? yearlyR1 : na, "Yearly Pivot R1", color=color.new(yearlyPivotColor, 20), linewidth=2, style=plot.style_stepline)
+plot(showYearlyPivots and showPivotR1S1 ? yearlyS1 : na, "Yearly Pivot S1", color=color.new(yearlyPivotColor, 20), linewidth=2, style=plot.style_stepline)
+plot(showYearlyPivots and showPivotR2S2 ? yearlyR2 : na, "Yearly Pivot R2", color=color.new(yearlyPivotColor, 40), linewidth=1, style=plot.style_stepline)
+plot(showYearlyPivots and showPivotR2S2 ? yearlyS2 : na, "Yearly Pivot S2", color=color.new(yearlyPivotColor, 40), linewidth=1, style=plot.style_stepline)
+plot(showYearlyPivots and showPivotR3S3 ? yearlyR3 : na, "Yearly Pivot R3", color=color.new(yearlyPivotColor, 55), linewidth=1, style=plot.style_stepline)
+plot(showYearlyPivots and showPivotR3S3 ? yearlyS3 : na, "Yearly Pivot S3", color=color.new(yearlyPivotColor, 55), linewidth=1, style=plot.style_stepline)
+
+plotshape(longSignal, title="Buy: 3 of 4 aligned", style=shape.labelup, location=location.belowbar, color=color.rgb(24, 135, 92), textcolor=color.white, size=size.normal, text="BUY")
+plotshape(shortSignal, title="Sell: 3 of 4 aligned", style=shape.labeldown, location=location.abovebar, color=color.rgb(205, 74, 74), textcolor=color.white, size=size.normal, text="SELL")
+
+bgcolor(longSetup ? color.new(color.rgb(24, 135, 92), 90) : shortSetup ? color.new(color.rgb(205, 74, 74), 90) : na)
+
+alertcondition(longSignal, title="Buy signal", message="{{ticker}} {{interval}} BUY: at least 3 of 4 bullish conditions aligned.")
+alertcondition(shortSignal, title="Sell signal", message="{{ticker}} {{interval}} SELL: at least 3 of 4 bearish conditions aligned.")
+
+var table panel = table.new(position.top_right, 3, 7, border_width=1)
+
+scoreCell(_row, _col, _score, _ready, _readyColor) =>
+    _bg = _ready ? color.new(_readyColor, 15) : color.new(color.gray, 55)
+    table.cell(panel, _col, _row, str.tostring(_score) + "/4", text_color=color.white, bgcolor=_bg)
+
+directionRow(_row, _name, _buyOk, _sellOk) =>
+    table.cell(panel, 0, _row, _name, text_color=color.white, bgcolor=color.black)
+    table.cell(panel, 1, _row, _buyOk ? "OK" : "WAIT", text_color=color.white, bgcolor=_buyOk ? color.new(color.rgb(24, 135, 92), 15) : color.new(color.gray, 55))
+    table.cell(panel, 2, _row, _sellOk ? "OK" : "WAIT", text_color=color.white, bgcolor=_sellOk ? color.new(color.rgb(205, 74, 74), 15) : color.new(color.gray, 55))
+
+if barstate.islast and showStatusPanel
+    table.cell(panel, 0, 0, "Condition", text_color=color.white, bgcolor=color.black)
+    table.cell(panel, 1, 0, "Buy", text_color=color.white, bgcolor=color.black)
+    table.cell(panel, 2, 0, "Sell", text_color=color.white, bgcolor=color.black)
+    table.cell(panel, 0, 1, "Score", text_color=color.white, bgcolor=color.black)
+    scoreCell(1, 1, longConditionCount, longConditionCount >= minAlignedConditions, color.rgb(24, 135, 92))
+    scoreCell(1, 2, shortConditionCount, shortConditionCount >= minAlignedConditions, color.rgb(205, 74, 74))
+    directionRow(2, "TrendSignal", trendBull, trendBear)
+    directionRow(3, "VWAP", priceAboveVwap, priceBelowVwap)
+    directionRow(4, "Chikou", chikouBull, chikouBear)
+    directionRow(5, "Weekly pivot", priceAboveWeeklyPivot, priceBelowWeeklyPivot)
+    directionRow(6, "Ready", longSetup, shortSetup)
+
+if barstate.islast and not showStatusPanel
+    table.clear(panel, 0, 0, 2, 6)
