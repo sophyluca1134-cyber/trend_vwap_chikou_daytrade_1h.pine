@@ -5,7 +5,7 @@ TradingView Pine Script indicator for a 1-hour day-trading workflow.
 ## Main Conditions
 
 - TrendSignal direction
-- VWAP side
+- 25 EMA side
 - Ichimoku Chikou span side
 - Weekly pivot side
 - Signal appears when at least 3 of 4 conditions align

@@ -1,23 +1,18 @@
 //@version=6
-indicator("TrendSignal + VWAP + Chikou Daytrade 1H", shorttitle="TS VWAP Chikou 1H", overlay=true, max_labels_count=500)
+indicator("TrendSignal + 25 EMA + Chikou Daytrade 1H", shorttitle="TS EMA Chikou 1H", overlay=true, max_labels_count=500)
 
 groupSignal = "TrendSignal"
 signalTf = input.timeframe("60", "Signal timeframe", group=groupSignal)
 risk = input.int(11, "RISK", minval=1, maxval=30, group=groupSignal)
 useCurrentTfBar = input.bool(false, "Use current 1H bar before close", group=groupSignal)
 
-groupVwap = "VWAP"
-anchorTf = input.timeframe("1D", "VWAP reset interval", group=groupVwap)
-vwapSource = input.source(hlc3, "VWAP source", group=groupVwap)
-showVwapBands = input.bool(false, "Show VWAP bands", group=groupVwap)
-bandMult1 = input.float(1.0, "Band 1 multiplier", minval=0.1, step=0.1, group=groupVwap)
-bandMult2 = input.float(2.0, "Band 2 multiplier", minval=0.1, step=0.1, group=groupVwap)
-autoColorVwap = input.bool(true, "Auto-color VWAP by price side", group=groupVwap)
-vwapFixedColor = input.color(color.white, "VWAP fixed color", group=groupVwap)
-vwapBullColor = input.color(color.rgb(24, 135, 92), "VWAP bullish color", group=groupVwap)
-vwapBearColor = input.color(color.rgb(205, 74, 74), "VWAP bearish color", group=groupVwap)
-vwapBand1Color = input.color(color.rgb(66, 133, 244), "VWAP band 1 color", group=groupVwap)
-vwapBand2Color = input.color(color.rgb(142, 68, 173), "VWAP band 2 color", group=groupVwap)
+groupEma = "25 EMA"
+emaLength = input.int(25, "EMA length", minval=1, group=groupEma)
+emaSource = input.source(close, "EMA source", group=groupEma)
+autoColorEma = input.bool(true, "Auto-color EMA by price side", group=groupEma)
+emaFixedColor = input.color(color.white, "EMA fixed color", group=groupEma)
+emaBullColor = input.color(color.rgb(24, 135, 92), "EMA bullish color", group=groupEma)
+emaBearColor = input.color(color.rgb(205, 74, 74), "EMA bearish color", group=groupEma)
 
 groupIchimoku = "Ichimoku Chikou"
 chikouDisplacement = input.int(26, "Chikou displacement", minval=2, group=groupIchimoku)
@@ -70,9 +65,7 @@ trendBuy = useCurrentTfBar ? buyLive : buyClosed
 trendSell = useCurrentTfBar ? sellLive : sellClosed
 trendDir = useCurrentTfBar ? dirLive : dirClosed
 
-isNewAnchor = timeframe.change(anchorTf)
-[vwapValue, upper1, lower1] = ta.vwap(vwapSource, isNewAnchor, bandMult1)
-[_, upper2, lower2] = ta.vwap(vwapSource, isNewAnchor, bandMult2)
+emaValue = ta.ema(emaSource, emaLength)
 
 [weeklyHigh, weeklyLow, weeklyClose] = request.security(syminfo.tickerid, "W", [high[1], low[1], close[1]], barmerge.gaps_off, barmerge.lookahead_on)
 [monthlyHigh, monthlyLow, monthlyClose] = request.security(syminfo.tickerid, "M", [high[1], low[1], close[1]], barmerge.gaps_off, barmerge.lookahead_on)
@@ -84,8 +77,8 @@ showPivotR1S1 = pivotLevelSet != "P only"
 showPivotR2S2 = pivotLevelSet == "P/R1-R2/S1-S2" or pivotLevelSet == "P/R1-R3/S1-S3"
 showPivotR3S3 = pivotLevelSet == "P/R1-R3/S1-S3"
 
-priceAboveVwap = close > vwapValue
-priceBelowVwap = close < vwapValue
+priceAboveEma = close > emaValue
+priceBelowEma = close < emaValue
 
 chikouLookback = chikouDisplacement - 1
 pastPrice = close[chikouLookback]
@@ -100,8 +93,8 @@ trendBull = trendDir == 1
 trendBear = trendDir == -1
 priceAboveWeeklyPivot = close > weeklyPivot
 priceBelowWeeklyPivot = close < weeklyPivot
-longConditionCount = (trendBull ? 1 : 0) + (priceAboveVwap ? 1 : 0) + (chikouBull ? 1 : 0) + (priceAboveWeeklyPivot ? 1 : 0)
-shortConditionCount = (trendBear ? 1 : 0) + (priceBelowVwap ? 1 : 0) + (chikouBear ? 1 : 0) + (priceBelowWeeklyPivot ? 1 : 0)
+longConditionCount = (trendBull ? 1 : 0) + (priceAboveEma ? 1 : 0) + (chikouBull ? 1 : 0) + (priceAboveWeeklyPivot ? 1 : 0)
+shortConditionCount = (trendBear ? 1 : 0) + (priceBelowEma ? 1 : 0) + (chikouBear ? 1 : 0) + (priceBelowWeeklyPivot ? 1 : 0)
 
 inSession = not useSession or not na(time(timeframe.period, tradeSession))
 longSetup = inSession and longConditionCount >= minAlignedConditions
@@ -116,16 +109,9 @@ if longSignal
 if shortSignal
     lastSide := -1
 
-vwapColor = autoColorVwap ? priceAboveVwap ? vwapBullColor : priceBelowVwap ? vwapBearColor : color.gray : vwapFixedColor
-plot(vwapValue, "VWAP", color=vwapColor, linewidth=2)
+emaColor = autoColorEma ? priceAboveEma ? emaBullColor : priceBelowEma ? emaBearColor : color.gray : emaFixedColor
+plot(emaValue, "25 EMA", color=emaColor, linewidth=2)
 plot(plotChikou ? close : na, "Chikou Span", color=chikouColor, offset=-chikouLookback, linewidth=1)
-
-upper1Plot = plot(showVwapBands ? upper1 : na, "Upper VWAP Band 1", color=color.new(vwapBand1Color, 25), linewidth=1)
-lower1Plot = plot(showVwapBands ? lower1 : na, "Lower VWAP Band 1", color=color.new(vwapBand1Color, 25), linewidth=1)
-upper2Plot = plot(showVwapBands ? upper2 : na, "Upper VWAP Band 2", color=color.new(vwapBand2Color, 35), linewidth=1)
-lower2Plot = plot(showVwapBands ? lower2 : na, "Lower VWAP Band 2", color=color.new(vwapBand2Color, 35), linewidth=1)
-fill(upper1Plot, upper2Plot, color=showVwapBands ? color.new(vwapBand2Color, 92) : na, title="Upper VWAP extension zone")
-fill(lower1Plot, lower2Plot, color=showVwapBands ? color.new(vwapBand2Color, 92) : na, title="Lower VWAP extension zone")
 
 plot(showWeeklyPivots ? weeklyPivot : na, "Weekly Pivot P", color=color.new(weeklyPivotColor, 0), linewidth=2, style=plot.style_stepline)
 plot(showWeeklyPivots and showPivotR1S1 ? weeklyR1 : na, "Weekly Pivot R1", color=color.new(weeklyPivotColor, 20), linewidth=1, style=plot.style_stepline)
@@ -178,7 +164,7 @@ if barstate.islast and showStatusPanel
     scoreCell(1, 1, longConditionCount, longConditionCount >= minAlignedConditions, color.rgb(24, 135, 92))
     scoreCell(1, 2, shortConditionCount, shortConditionCount >= minAlignedConditions, color.rgb(205, 74, 74))
     directionRow(2, "TrendSignal", trendBull, trendBear)
-    directionRow(3, "VWAP", priceAboveVwap, priceBelowVwap)
+    directionRow(3, "25 EMA", priceAboveEma, priceBelowEma)
     directionRow(4, "Chikou", chikouBull, chikouBear)
     directionRow(5, "Weekly pivot", priceAboveWeeklyPivot, priceBelowWeeklyPivot)
     directionRow(6, "Ready", longSetup, shortSetup)
